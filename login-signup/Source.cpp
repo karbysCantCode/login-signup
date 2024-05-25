@@ -7,6 +7,7 @@
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/filereadstream.h"
 #include <cstdio>
+#include <vector>
 
 using namespace std;
 using namespace rapidjson;
@@ -34,8 +35,6 @@ public:
 };
 
 class userProfile {
-private:
-	Value profile;
 public:
 	struct UserVerificationResult
 	{
@@ -45,12 +44,14 @@ public:
 		bool hasUserId;
 
 	};
-	Value& BuildProfile(const std::string& username, const std::string& password, int logins, int userId, Document::AllocatorType& allocator) {
+	 static Value BuildProfile(const std::string& username, const std::string& password) {
+		Document::AllocatorType& allocator = userData.GetAllocator();
+		Value profile;
 		profile.SetObject();
 		profile.AddMember("Username", Value().SetString(username.c_str(), username.length(), allocator), allocator);
 		profile.AddMember("Password", Value().SetString(password.c_str(), password.length(), allocator), allocator);
-		profile.AddMember("Logins", logins, allocator);
-		profile.AddMember("UserId", userId, allocator);
+		profile.AddMember("Logins", 0, allocator);
+		profile.AddMember("UserId", userData.MemberCount() + 1, allocator);
 		return profile;
 	}
 
@@ -111,14 +112,15 @@ void writeToJson() {
 
 void verifyExistingAccounts(bool correct) {
 	cout << "hasUser,hasPass,hasLogins,hasUserId\n";
+	int maxUserId = 0;
+	vector<string> listToCorrectUserId;
+	Document::AllocatorType& allocator = userData.GetAllocator();
 	for (Value::MemberIterator itr = userData.MemberBegin(); itr != userData.MemberEnd(); ++itr) {
 		const char* key = itr->name.GetString();
 		Value& currentValue = itr->value;
 
 		userProfile::UserVerificationResult currentVerifyResult = userProfile::VerifyProfile(key);
 		if (correct) {
-			Document::AllocatorType& allocator = userData.GetAllocator();
-
 			if (!currentVerifyResult.hasUsername) {
 				Value usernameKey;
 				usernameKey.SetString("Username", allocator);
@@ -150,16 +152,43 @@ void verifyExistingAccounts(bool correct) {
 			}
 
 			if (!currentVerifyResult.hasUserId) {
-				Value userIdKey;
-				userIdKey.SetString("UserId", allocator);
-
-				currentValue.AddMember(userIdKey, Value().SetInt(userData.MemberCount() + 1), allocator);
+				listToCorrectUserId.push_back(key);
+			}
+			else if (currentValue["UserId"].GetInt() > maxUserId) {
+				maxUserId = currentValue["UserId"].GetInt();
 			}
 			if (!currentVerifyResult.hasUsername|| !currentVerifyResult.hasPassword|| !currentVerifyResult.hasLogins|| !currentVerifyResult.hasUserId) {
 				writeToJson();
 			}
 		}
 		cout << key << ':' << currentVerifyResult.hasUsername << currentVerifyResult.hasPassword << currentVerifyResult.hasLogins << currentVerifyResult.hasUserId << endl;
+	}
+
+	if (correct && !listToCorrectUserId.empty()) {
+		for (const auto& currentKey : listToCorrectUserId) {
+			Value& currentValue = userData[currentKey];
+			Value userIdKey;
+			userIdKey.SetString("UserId", allocator);
+
+			Value userIdValue;
+			userIdValue.SetInt(++maxUserId);
+
+			currentValue.AddMember(userIdKey, userIdValue, allocator);
+		}
+		writeToJson();
+	}
+}
+
+void readJsonAspect(string aspect) { // aspect is what you want to read etc logins, userid, usernaem, password
+	for (Value::MemberIterator itr = userData.MemberBegin(); itr != userData.MemberEnd(); ++itr) {
+		const char* key = itr->name.GetString();
+		const Value& currentValue = itr->value;
+		if (aspect == "UserId" || aspect == "Logins") {
+			cout << key << ':' << currentValue[aspect].GetInt() << endl;
+		}
+		else {
+			cout << key << ':' << currentValue[aspect].GetString() << endl;
+		}
 	}
 }
 
@@ -206,7 +235,8 @@ void createUser(string username, string password) {
 
 void openAdminPanel() {
 	short choice = 0;
-	while (cin.fail() || choice < 1 || choice > 5) {
+	short aspectChoice = 0;
+	while (cin.fail() || choice < 1 || choice > 6) {
 		if (cin.fail()) {
 			cin.clear(); // Clear the error state
 			cin.ignore(numeric_limits<streamsize>::max(), '\n');
@@ -223,8 +253,8 @@ void openAdminPanel() {
 		cout << "   []" << "   [3] check some cool statistrics\n";
 		cout << "   []" << "   [4] verify all profiles\n";
 		cout << "   []" << "   [5] verify and correct all profiles\n";
-		cout << "   []" << "   (enter the the number on what one you weant to do)\n";
-		cout << "   []\n";
+		cout << "   []" << "   [6] read a value of every account\n";
+		cout << "     " << "   (enter the the number on what one you weant to do)\n";
 		cin >> choice;
 	}
 
@@ -244,6 +274,40 @@ void openAdminPanel() {
 		verifyExistingAccounts(true);
 		openAdminPanel();
 		break;
+	case 6:
+		while (cin.fail() || aspectChoice > 4 || aspectChoice < 1) {
+			if (cin.fail()) {
+				cin.clear();
+				cin.ignore(numeric_limits<streamsize>::max(), '\n');
+			}
+			cout << "please pick aspect from the following list: \n";
+			cout << "[1] Username\n";
+			cout << "[2] Password\n";
+			cout << "[3] Logins\n";
+			cout << "[4] UserId\n";
+			cin >> aspectChoice;
+		}
+
+		switch (aspectChoice)
+		{
+		case 1:
+			readJsonAspect("Username");
+			break;
+		case 2:
+			readJsonAspect("Password");
+			break;
+		case 3:
+			readJsonAspect("Logins");
+			break;
+		case 4:
+			readJsonAspect("UserId");
+			break;
+
+		default:
+			break;
+		}
+
+		openAdminPanel();
 	default:
 		cout << "YOU BROKE IT HOW";
 		break;
@@ -268,9 +332,10 @@ int registration() {
 	cout << "Choose your password:";
 	string password;
 	cin >> password;
+	Document::AllocatorType& allocator = userData.GetAllocator();
 
-	createUser(username, password);
-
+	userData.AddMember(Value().SetString(username, allocator), userProfile::BuildProfile(username, password), allocator);
+	writeToJson();
 	openMenu();
 
 	return 0;
